@@ -1,0 +1,18 @@
+[package]
+name = "the_messing"
+version = "0.1.0"
+authors = ["VersBinarii <versbinarii@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+embedded-hal = "0.2.4"
+cortex-m = "0.6.4"
+cortex-m-rt = "0.6.13"
+nb = "1"
+panic-halt = "0.2.0"
+
+[dependencies.stm32f1xx-hal]
+version = "0.7"
+features = ["stm32f103", "medium", "rt"]
