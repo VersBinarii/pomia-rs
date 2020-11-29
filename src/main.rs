@@ -7,12 +7,14 @@ use core::cell::RefCell;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use embedded_hal::blocking::delay::DelayMs;
+use embedded_hal::Pwm;
 use stm32f1xx_hal::{
     delay::Delay,
-    gpio::{gpioa::PA15, gpioc::PC13, Alternate, Output, PushPull},
+    gpio::{gpioc::PC13, Output, PushPull},
     pac::{self, interrupt, TIM3},
     prelude::*,
-    pwm::{Channel, Pwm, C1},
+    pwm::Channel,
+    time::Hertz,
     timer::{CountDownTimer, Event, Tim2PartialRemap1, Timer},
 };
 
@@ -92,7 +94,7 @@ fn main() -> ! {
         1.khz(),
     );
 
-    let mut tone = Tone::new(pwm);
+    let mut tone = Tone::new(pwm, Channel::C1);
     // Wait for the timer to trigger an update and change the state of the LED
     loop {
         tone.play_song(&CAT_SONG, &mut delay);
@@ -124,34 +126,37 @@ unsafe fn TIM3() {
 //['c', 'd', 'e', 'f', 'g', 'a', 'b', 'C'];
 // [262, 293, 329, 349, 392, 440, 494, 523];
 
-type PwmTone = Pwm<pac::TIM2, Tim2PartialRemap1, C1, PA15<Alternate<PushPull>>>;
-
-struct Tone {
-    pwm: PwmTone,
+struct Tone<P> {
+    pwm: P,
     notes: [char; 8],
     frequencies: [u32; 8],
     tempo: u32,
+    channel: Channel,
 }
 
-impl Tone {
-    fn new(mut pwm: PwmTone) -> Self {
-        pwm.set_duty(Channel::C1, pwm.get_max_duty() / 2);
+impl<P> Tone<P>
+where
+    P: Pwm<Channel = Channel, Duty = u16, Time = Hertz>,
+{
+    fn new(mut pwm: P, channel: Channel) -> Self {
+        pwm.set_duty(channel, pwm.get_max_duty() / 2);
         Self {
             pwm,
             notes: ['c', 'd', 'e', 'f', 'g', 'a', 'b', 'C'],
             frequencies: [262, 293, 329, 349, 392, 440, 494, 523],
             tempo: 100,
+            channel,
         }
     }
 
     fn play_song<D: DelayMs<u32>>(&mut self, notes: &[(char, u32)], delay: &mut D) {
-        self.pwm.enable(Channel::C1);
+        self.pwm.enable(self.channel);
         for (note, beat) in notes.iter() {
             let tone_duration = beat * self.tempo;
             self.play_tone(note);
             delay.delay_ms(tone_duration);
         }
-        self.pwm.disable(Channel::C1);
+        self.pwm.disable(self.channel);
     }
 
     fn play_tone(&mut self, n: &char) {
