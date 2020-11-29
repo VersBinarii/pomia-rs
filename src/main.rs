@@ -1,21 +1,19 @@
-#![deny(unsafe_code)]
 #![no_std]
 #![no_main]
 
 use panic_halt as _;
 
-use nb::block;
-
+use core::cell::RefCell;
+use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use embedded_hal::blocking::delay::DelayMs;
-use embedded_hal::digital::v2::OutputPin;
 use stm32f1xx_hal::{
     delay::Delay,
-    gpio::{gpioa::PA15, Alternate, PushPull},
-    pac,
+    gpio::{gpioa::PA15, gpioc::PC13, Alternate, Output, PushPull},
+    pac::{self, interrupt, TIM3},
     prelude::*,
     pwm::{Channel, Pwm, C1},
-    timer::{Tim2PartialRemap1, Timer},
+    timer::{CountDownTimer, Event, Tim2PartialRemap1, Timer},
 };
 
 const CAT_SONG: [(char, u32); 24] = [
@@ -45,6 +43,11 @@ const CAT_SONG: [(char, u32); 24] = [
     ('c', 4),
 ];
 
+// Make LED pin globally available
+static G_LED: Mutex<RefCell<Option<PC13<Output<PushPull>>>>> = Mutex::new(RefCell::new(None));
+// Make timer interrupt registers globally available
+static G_TIM: Mutex<RefCell<Option<CountDownTimer<TIM3>>>> = Mutex::new(RefCell::new(None));
+
 #[entry]
 fn main() -> ! {
     // Get access to the core peripherals from the cortex-m crate
@@ -71,11 +74,19 @@ fn main() -> ! {
 
     // Configure gpio C pin 13 as a push-pull output. The `crh` register is passed to the function
     // in order to configure the port. For pins 0-7, crl should be passed instead.
-    let mut led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
+    let led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
+    cortex_m::interrupt::free(|cs| {
+        *G_LED.borrow(cs).borrow_mut() = Some(led);
+    });
+    let mut timer3 = Timer::tim3(dp.TIM3, &clocks, &mut rcc.apb1).start_count_down(1.hz());
+    timer3.listen(Event::Update);
+    cortex_m::interrupt::free(|cs| {
+        *G_TIM.borrow(cs).borrow_mut() = Some(timer3);
+    });
     // Configure the syst timer to trigger an update every second
     //let mut timer = Timer::syst(cp.SYST, &clocks).start_count_down(1.hz());
     let mut delay = Delay::new(cp.SYST, clocks);
-    let mut pwm = Timer::tim2(dp.TIM2, &clocks, &mut rcc.apb1).pwm::<Tim2PartialRemap1, _, _, _>(
+    let pwm = Timer::tim2(dp.TIM2, &clocks, &mut rcc.apb1).pwm::<Tim2PartialRemap1, _, _, _>(
         pwm_pin,
         &mut afio.mapr,
         1.khz(),
@@ -84,15 +95,32 @@ fn main() -> ! {
     let mut tone = Tone::new(pwm);
     // Wait for the timer to trigger an update and change the state of the LED
     loop {
-        delay.delay_ms(1000u32);
-        led.set_high().unwrap();
-        delay.delay_ms(1000u32);
-        led.set_low().unwrap();
-
         tone.play_song(&CAT_SONG, &mut delay);
     }
 }
 
+#[interrupt]
+unsafe fn TIM3() {
+    static mut LED: Option<PC13<Output<PushPull>>> = None;
+    static mut TIM: Option<CountDownTimer<TIM3>> = None;
+
+    let led = LED.get_or_insert_with(|| {
+        cortex_m::interrupt::free(|cs| {
+            // Move LED pin here, leaving a None in its place
+            G_LED.borrow(cs).replace(None).unwrap()
+        })
+    });
+
+    let tim = TIM.get_or_insert_with(|| {
+        cortex_m::interrupt::free(|cs| {
+            // Move LED pin here, leaving a None in its place
+            G_TIM.borrow(cs).replace(None).unwrap()
+        })
+    });
+
+    let _ = led.toggle();
+    let _ = tim.wait();
+}
 //['c', 'd', 'e', 'f', 'g', 'a', 'b', 'C'];
 // [262, 293, 329, 349, 392, 440, 494, 523];
 
