@@ -1,4 +1,4 @@
-file target/thumbv7m-none-eabi/debug/the_messing
+file target/thumbv7m-none-eabi/release/the_messing
 target remote :3333
 
 set print asm-demangle on
