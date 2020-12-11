@@ -3,16 +3,13 @@
 
 use panic_halt as _;
 
-use embedded_hal::blocking::delay::DelayMs;
-use embedded_hal::Pwm;
-use stm32f1xx_hal::{stm32, time::Hertz};
-
 use embedded_graphics::{
     fonts::{Font6x8, Text},
     pixelcolor::Rgb565,
     prelude::*,
     style::{MonoTextStyle, MonoTextStyleBuilder},
 };
+use embedded_hal::{blocking::delay::DelayMs, Pwm};
 use st7735_lcd::ST7735;
 use stm32f1xx_hal::{
     gpio::{
@@ -24,6 +21,8 @@ use stm32f1xx_hal::{
     prelude::*,
     pwm::Channel,
     spi::{Spi, Spi1NoRemap},
+    stm32,
+    time::Hertz,
 };
 type RESET = PB0<Output<PushPull>>;
 type DC = PB1<Output<PushPull>>;
@@ -62,21 +61,30 @@ const CAT_SONG: [(char, u32); 24] = [
 #[rtic::app(device = crate::stm32)]
 mod app {
 
+    use bme280::BME280;
     use core::fmt::Write;
     use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
-    use heapless::consts::*;
-    use heapless::String;
+    use heapless::{consts::*, String};
     use rtic_core::prelude::*;
     use st7735_lcd::{Orientation, ST7735};
     use stm32f1xx_hal::{
         delay::Delay,
-        gpio::{gpioa::PA15, gpioc::PC13, Alternate, Output, PushPull},
-        pac::{TIM2, TIM3},
+        gpio::{
+            gpioa::PA15,
+            gpiob::{PB8, PB9},
+            gpioc::PC13,
+            Alternate, OpenDrain, Output, PushPull,
+        },
+        i2c::{BlockingI2c, DutyCycle, Mode as I2cMode},
+        pac::{I2C1, TIM2, TIM3},
         prelude::*,
         pwm::{Channel, Pwm, C1},
-        spi::{Mode, Phase, Polarity, Spi},
+        spi::{Mode as SpiMode, Phase, Polarity, Spi},
         timer::{CountDownTimer, Event, Tim2PartialRemap1, Timer},
     };
+
+    type SCL = PB8<Alternate<OpenDrain>>;
+    type SDA = PB9<Alternate<OpenDrain>>;
 
     #[resources]
     struct Resource {
@@ -87,6 +95,7 @@ mod app {
         display: crate::Display,
         #[init(0)]
         counter: u32,
+        bme: BME280<BlockingI2c<I2C1, (SCL, SDA)>>,
     }
 
     #[init]
@@ -124,8 +133,7 @@ mod app {
         let mut timer3 = Timer::tim3(dp.TIM3, &clocks, &mut rcc.apb1).start_count_down(50.hz());
         timer3.listen(Event::Update);
 
-        // Configure the syst timer to trigger an update every second
-        //let mut timer = Timer::syst(cp.SYST, &clocks).start_count_down(1.hz());
+        // PWM config
         let mut delay = Delay::new(cp.SYST, clocks);
         let pwm = Timer::tim2(dp.TIM2, &clocks, &mut rcc.apb1).pwm::<Tim2PartialRemap1, _, _, _>(
             pwm_pin,
@@ -133,6 +141,7 @@ mod app {
             1.khz(),
         );
         let tone = crate::Tone::new(pwm, Channel::C1);
+
         //SPI
         let sck = gpioa.pa5.into_alternate_push_pull(&mut gpioa.crl);
         let miso = gpioa.pa6;
@@ -145,7 +154,7 @@ mod app {
             dp.SPI1,
             (sck, miso, mosi),
             &mut afio.mapr,
-            Mode {
+            SpiMode {
                 polarity: Polarity::IdleLow,
                 phase: Phase::CaptureOnFirstTransition,
             },
@@ -154,36 +163,78 @@ mod app {
             &mut rcc.apb2,
         );
 
+        // Instanciate Display driver
         let mut disp = ST7735::new(spi, dc, rst, true, false, 128, 160);
 
         disp.init(&mut delay).unwrap();
         disp.set_orientation(&Orientation::Portrait).unwrap();
         let _ = disp.clear(Rgb565::BLACK);
         let display = crate::Display::new(disp);
+
+        // I2C config
+        let scl = gpiob.pb8.into_alternate_open_drain(&mut gpiob.crh);
+        let sda = gpiob.pb9.into_alternate_open_drain(&mut gpiob.crh);
+        let i2c = BlockingI2c::i2c1(
+            dp.I2C1,
+            (scl, sda),
+            &mut afio.mapr,
+            I2cMode::Fast {
+                frequency: 400000.hz(),
+                duty_cycle: DutyCycle::Ratio2to1,
+            },
+            clocks,
+            &mut rcc.apb1,
+            5000,
+            3,
+            5000,
+            5000,
+        );
+
+        let mut bme = BME280::new_primary(i2c);
+        let _ = bme.init(&mut delay);
         init::LateResources {
             led,
             tim: timer3,
             tone,
             delay,
             display,
+            bme,
         }
     }
 
-    #[idle(resources = [tone, delay, display, counter])]
+    #[idle(resources = [tone, delay, display, counter, bme])]
     fn idle(cx: idle::Context) -> ! {
         let tone = cx.resources.tone;
         let delay = cx.resources.delay;
         let display = cx.resources.display;
         let mut counter = cx.resources.counter;
-        (tone, delay, display).lock(|tone, delay, display| {
+        let bme = cx.resources.bme;
+        (tone, delay, display, bme).lock(|tone, delay, display, bme| {
             // draw stuff here
             display.print_text("We're printing", 10, 30);
             tone.play_song(&crate::CAT_SONG, delay);
             loop {
-                let mut text: String<U16> = String::new();
+                let mut text: String<U64> = String::new();
                 let counter = counter.lock(|c| *c);
                 write!(text, "Counter: {}", counter).unwrap();
                 display.print_text(&text, 10, 40);
+                text.clear();
+
+                match bme.measure(delay) {
+                    Ok(measurement) => {
+                        write!(
+                            text,
+                            "T: {:.2}C\nH: {:.2}%\nP: {:.2}Pa",
+                            measurement.temperature, measurement.humidity, measurement.pressure
+                        )
+                        .unwrap();
+                        display.print_text(&text, 10, 50);
+                    }
+                    Err(e) => {
+                        write!(text, "E: {:?}", e).unwrap();
+                        display.print_text(&text, 10, 100);
+                    }
+                }
             }
         });
         loop {}

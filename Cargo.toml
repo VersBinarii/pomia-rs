@@ -17,6 +17,7 @@ rtic-core = "0.3.1"
 st7735-lcd = "0.8.0-alpha.1"
 embedded-graphics = "0.7.0-alpha.2"
 heapless = "0.5.6"
+bme280 = {git = "https://github.com/VersBinarii/bme280-rs"}
 
 [dependencies.stm32f1xx-hal]
 version = "0.7"
