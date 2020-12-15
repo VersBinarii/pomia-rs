@@ -1,35 +1,12 @@
 #![no_std]
 #![no_main]
 
+mod display;
+mod tone;
+
 use panic_halt as _;
 
-use embedded_graphics::{
-    fonts::{Font6x8, Text},
-    pixelcolor::Rgb565,
-    prelude::*,
-    style::{MonoTextStyle, MonoTextStyleBuilder},
-};
-use embedded_hal::{blocking::delay::DelayMs, Pwm};
-use st7735_lcd::ST7735;
-use stm32f1xx_hal::{
-    gpio::{
-        gpioa::{PA5, PA6, PA7},
-        gpiob::{PB0, PB1},
-        Alternate, Floating, Input, Output, PushPull,
-    },
-    pac::SPI1,
-    prelude::*,
-    pwm::Channel,
-    spi::{Spi, Spi1NoRemap},
-    stm32,
-    time::Hertz,
-};
-type RESET = PB0<Output<PushPull>>;
-type DC = PB1<Output<PushPull>>;
-type SCK = PA5<Alternate<PushPull>>;
-type MISO = PA6<Input<Floating>>;
-type MOSI = PA7<Alternate<PushPull>>;
-type DISP = ST7735<Spi<SPI1, Spi1NoRemap, (SCK, MISO, MOSI), u8>, DC, RESET>;
+use stm32f1xx_hal::stm32;
 
 const CAT_SONG: [(char, u32); 24] = [
     ('g', 2),
