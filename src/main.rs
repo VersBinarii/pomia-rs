@@ -38,41 +38,50 @@ const CAT_SONG: [(char, u32); 24] = [
 #[rtic::app(device = crate::stm32)]
 mod app {
 
+    use crate::display::{Display, Menu, MenuItem};
+    use crate::tone::Tone;
     use bme280::BME280;
     use core::fmt::Write;
     use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
+    use embedded_hal::digital::v2::InputPin;
     use heapless::{consts::*, String};
     use rtic_core::prelude::*;
     use st7735_lcd::{Orientation, ST7735};
     use stm32f1xx_hal::{
         delay::Delay,
         gpio::{
-            gpioa::PA15,
+            gpioa::{PA0, PA11, PA12, PA15},
             gpiob::{PB8, PB9},
             gpioc::PC13,
-            Alternate, OpenDrain, Output, PushPull,
+            Alternate, Edge, ExtiPin, Input, OpenDrain, Output, PullUp, PushPull,
         },
         i2c::{BlockingI2c, DutyCycle, Mode as I2cMode},
         pac::{I2C1, TIM2, TIM3},
         prelude::*,
         pwm::{Channel, Pwm, C1},
         spi::{Mode as SpiMode, Phase, Polarity, Spi},
-        timer::{CountDownTimer, Event, Tim2PartialRemap1, Timer},
+        timer::{CountDownTimer, Event, Tim2NoRemap, Timer},
     };
 
     type SCL = PB8<Alternate<OpenDrain>>;
     type SDA = PB9<Alternate<OpenDrain>>;
 
+    pub struct Buttons {
+        enter: PA15<Input<PullUp>>,
+        left: PA11<Input<PullUp>>,
+        right: PA12<Input<PullUp>>,
+    }
+
     #[resources]
     struct Resource {
         led: PC13<Output<PushPull>>,
         tim: CountDownTimer<TIM3>,
-        tone: crate::Tone<Pwm<TIM2, Tim2PartialRemap1, C1, PA15<Alternate<PushPull>>>>,
+        tone: Tone<Pwm<TIM2, Tim2NoRemap, C1, PA0<Alternate<PushPull>>>>,
         delay: Delay,
-        display: crate::Display,
-        #[init(0)]
-        counter: u32,
+        display: Display,
         bme: BME280<BlockingI2c<I2C1, (SCL, SDA)>>,
+        buttons: Buttons,
+        menu: Menu,
     }
 
     #[init]
@@ -101,9 +110,6 @@ mod app {
         let mut gpioa = dp.GPIOA.split(&mut rcc.apb2);
         let mut gpiob = dp.GPIOB.split(&mut rcc.apb2);
 
-        let (pa15, _, _) = afio.mapr.disable_jtag(gpioa.pa15, gpiob.pb3, gpiob.pb4);
-        let pwm_pin = pa15.into_alternate_push_pull(&mut gpioa.crh);
-
         // Configure gpio C pin 13 as a push-pull output. The `crh` register is passed to the function
         // in order to configure the port. For pins 0-7, crl should be passed instead.
         let led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
@@ -111,13 +117,14 @@ mod app {
         timer3.listen(Event::Update);
 
         // PWM config
+        let pwm_pin = gpioa.pa0.into_alternate_push_pull(&mut gpioa.crl);
         let mut delay = Delay::new(cp.SYST, clocks);
-        let pwm = Timer::tim2(dp.TIM2, &clocks, &mut rcc.apb1).pwm::<Tim2PartialRemap1, _, _, _>(
+        let pwm = Timer::tim2(dp.TIM2, &clocks, &mut rcc.apb1).pwm::<Tim2NoRemap, _, _, _>(
             pwm_pin,
             &mut afio.mapr,
             1.khz(),
         );
-        let tone = crate::Tone::new(pwm, Channel::C1);
+        let tone = Tone::new(pwm, Channel::C1);
 
         //SPI
         let sck = gpioa.pa5.into_alternate_push_pull(&mut gpioa.crl);
@@ -146,7 +153,7 @@ mod app {
         disp.init(&mut delay).unwrap();
         disp.set_orientation(&Orientation::Portrait).unwrap();
         let _ = disp.clear(Rgb565::BLACK);
-        let display = crate::Display::new(disp);
+        let display = Display::new(disp);
 
         // I2C config
         let scl = gpiob.pb8.into_alternate_open_drain(&mut gpiob.crh);
@@ -167,8 +174,27 @@ mod app {
             5000,
         );
 
+        //Initialize the sensor
         let mut bme = BME280::new_primary(i2c);
         let _ = bme.init(&mut delay);
+
+        let (pa15, _, _) = afio.mapr.disable_jtag(gpioa.pa15, gpiob.pb3, gpiob.pb4);
+        let mut enter = pa15.into_pull_up_input(&mut gpioa.crh);
+        enter.make_interrupt_source(&mut afio);
+        enter.trigger_on_edge(&dp.EXTI, Edge::RISING_FALLING);
+        enter.enable_interrupt(&dp.EXTI);
+        let mut left = gpioa.pa11.into_pull_up_input(&mut gpioa.crh); // PA11
+        left.make_interrupt_source(&mut afio);
+        left.trigger_on_edge(&dp.EXTI, Edge::RISING_FALLING);
+        left.enable_interrupt(&dp.EXTI);
+        let mut right = gpioa.pa12.into_pull_up_input(&mut gpioa.crh); //PA12
+        right.make_interrupt_source(&mut afio);
+        right.trigger_on_edge(&dp.EXTI, Edge::RISING_FALLING);
+        right.enable_interrupt(&dp.EXTI);
+
+        let menu = Menu::new();
+
+        let buttons = Buttons { enter, left, right };
         init::LateResources {
             led,
             tim: timer3,
@@ -176,119 +202,82 @@ mod app {
             delay,
             display,
             bme,
+            menu,
+            buttons,
         }
     }
 
-    #[idle(resources = [tone, delay, display, counter, bme])]
+    #[idle(resources = [tone, delay, display, bme, menu])]
     fn idle(cx: idle::Context) -> ! {
         let tone = cx.resources.tone;
         let delay = cx.resources.delay;
         let display = cx.resources.display;
-        let mut counter = cx.resources.counter;
         let bme = cx.resources.bme;
+        let mut menu = cx.resources.menu;
         (tone, delay, display, bme).lock(|tone, delay, display, bme| {
             // draw stuff here
-            display.print_text("We're printing", 10, 30);
             tone.play_song(&crate::CAT_SONG, delay);
             loop {
                 let mut text: String<U64> = String::new();
-                let counter = counter.lock(|c| *c);
-                write!(text, "Counter: {}", counter).unwrap();
-                display.print_text(&text, 10, 40);
+
+                let menu_item = menu.lock(|m| m.current_menu_item());
+                display.render_tab_header(menu_item);
                 text.clear();
 
                 match bme.measure(delay) {
                     Ok(measurement) => {
-                        write!(
-                            text,
-                            "T: {:.2}C\nH: {:.2}%\nP: {:.2}Pa",
-                            measurement.temperature, measurement.humidity, measurement.pressure
-                        )
-                        .unwrap();
-                        display.print_text(&text, 10, 50);
+                        let confirm = menu.lock(|m| m.confirm);
+                        match menu_item {
+                            MenuItem::Temperature if confirm => {
+                                write!(text, "T: {:.2}C", measurement.temperature,).unwrap();
+                                display.print_text(&text, 10, 22);
+                            }
+                            MenuItem::Humidity if confirm => {
+                                write!(text, "H: {:.1}%", measurement.humidity,).unwrap();
+                                display.print_text(&text, 10, 22);
+                            }
+                            MenuItem::Pressure if confirm => {
+                                write!(text, "P: {:.0}Pa", measurement.pressure,).unwrap();
+                                display.print_text(&text, 10, 22);
+                            }
+                            _ => {}
+                        }
+                        menu.lock(|m| m.confirm = false);
                     }
                     Err(e) => {
                         write!(text, "E: {:?}", e).unwrap();
                         display.print_text(&text, 10, 100);
                     }
-                }
+                };
             }
         });
         loop {}
     }
 
-    #[task(binds = TIM3, resources = [led, tim, counter])]
+    #[task(binds = EXTI15_10, resources = [buttons, menu])]
+    fn exti15_10(cx: exti15_10::Context) {
+        let buttons = cx.resources.buttons;
+        let menu = cx.resources.menu;
+
+        (buttons, menu).lock(|buttons, menu| {
+            let Buttons { enter, left, right } = buttons;
+            if enter.check_interrupt() && enter.is_low().unwrap() {
+                menu.confirm = true;
+            } else if left.check_interrupt() && left.is_low().unwrap() {
+                menu.backward();
+            } else if right.check_interrupt() && right.is_low().unwrap() {
+                menu.forward();
+            }
+
+            enter.clear_interrupt_pending_bit();
+            left.clear_interrupt_pending_bit();
+            right.clear_interrupt_pending_bit();
+        })
+    }
+
+    #[task(binds = TIM3, resources = [led, tim])]
     fn tim3(mut cx: tim3::Context) {
         let _ = cx.resources.led.lock(|led| led.toggle());
         let _ = cx.resources.tim.lock(|tim| tim.wait());
-        let _ = cx.resources.counter.lock(|c| *c += 1);
-    }
-}
-
-pub struct Display {
-    style: MonoTextStyle<Rgb565, Font6x8>,
-    display: DISP,
-}
-
-impl Display {
-    pub fn new(display: DISP) -> Self {
-        let style = MonoTextStyleBuilder::new(Font6x8)
-            .text_color(Rgb565::RED)
-            .background_color(Rgb565::BLACK)
-            .build();
-
-        Self { display, style }
-    }
-
-    pub fn print_text(&mut self, text: &str, x: i32, y: i32) {
-        Text::new(text, Point::new(x, y))
-            .into_styled(self.style)
-            .draw(&mut self.display)
-            .unwrap();
-    }
-}
-
-//['c', 'd', 'e', 'f', 'g', 'a', 'b', 'C'];
-// [262, 293, 329, 349, 392, 440, 494, 523];
-
-pub struct Tone<P> {
-    pwm: P,
-    notes: [char; 8],
-    frequencies: [u32; 8],
-    tempo: u32,
-    channel: Channel,
-}
-
-impl<P> Tone<P>
-where
-    P: Pwm<Channel = Channel, Duty = u16, Time = Hertz>,
-{
-    pub fn new(mut pwm: P, channel: Channel) -> Self {
-        pwm.set_duty(channel, pwm.get_max_duty() / 2);
-        Self {
-            pwm,
-            notes: ['c', 'd', 'e', 'f', 'g', 'a', 'b', 'C'],
-            frequencies: [262, 293, 329, 349, 392, 440, 494, 523],
-            tempo: 100,
-            channel,
-        }
-    }
-
-    pub fn play_song<D: DelayMs<u32>>(&mut self, notes: &[(char, u32)], delay: &mut D) {
-        self.pwm.enable(self.channel);
-        for (note, beat) in notes.iter() {
-            let tone_duration = beat * self.tempo;
-            self.play_tone(note);
-            delay.delay_ms(tone_duration);
-        }
-        self.pwm.disable(self.channel);
-    }
-
-    fn play_tone(&mut self, n: &char) {
-        for (idx, note) in self.notes.iter().enumerate() {
-            if note == n {
-                self.pwm.set_period(self.frequencies[idx].hz())
-            }
-        }
     }
 }
