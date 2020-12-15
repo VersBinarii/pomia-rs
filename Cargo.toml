@@ -1,5 +1,5 @@
 [package]
-name = "the_messing"
+name = "pomia-rs"
 version = "0.1.0"
 authors = ["VersBinarii <versbinarii@gmail.com>"]
 edition = "2018"
