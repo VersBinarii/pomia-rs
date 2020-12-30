@@ -38,13 +38,11 @@ const CAT_SONG: [(char, u32); 24] = [
 #[rtic::app(device = crate::stm32)]
 mod app {
 
-    use crate::display::{Display, Menu, MenuItem};
+    use crate::display::{Display, Gui, Watch};
     use crate::tone::Tone;
     use bme280::BME280;
-    use core::fmt::Write;
     use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
     use embedded_hal::digital::v2::InputPin;
-    use heapless::{consts::*, String};
     use rtic_core::prelude::*;
     use st7735_lcd::{Orientation, ST7735};
     use stm32f1xx_hal::{
@@ -59,12 +57,22 @@ mod app {
         pac::{I2C1, TIM2, TIM3},
         prelude::*,
         pwm::{Channel, Pwm, C1},
+        rtc::Rtc,
         spi::{Mode as SpiMode, Phase, Polarity, Spi},
         timer::{CountDownTimer, Event, Tim2NoRemap, Timer},
     };
 
     type SCL = PB8<Alternate<OpenDrain>>;
     type SDA = PB9<Alternate<OpenDrain>>;
+
+    #[derive(Debug, Copy, Clone)]
+    pub enum PressedButton {
+        Left,
+        Right,
+        ShortPress,
+        LongPress,
+        None,
+    }
 
     pub struct Buttons {
         enter: PA15<Input<PullUp>>,
@@ -78,10 +86,14 @@ mod app {
         tim: CountDownTimer<TIM3>,
         tone: Tone<Pwm<TIM2, Tim2NoRemap, C1, PA0<Alternate<PushPull>>>>,
         delay: Delay,
-        display: Display,
         bme: BME280<BlockingI2c<I2C1, (SCL, SDA)>>,
         buttons: Buttons,
-        menu: Menu,
+        gui: Gui,
+        watch: Watch,
+        #[init(PressedButton::None)]
+        pressed_btn: PressedButton,
+        #[init(0)]
+        press_counter: u8,
     }
 
     #[init]
@@ -113,7 +125,7 @@ mod app {
         // Configure gpio C pin 13 as a push-pull output. The `crh` register is passed to the function
         // in order to configure the port. For pins 0-7, crl should be passed instead.
         let led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
-        let mut timer3 = Timer::tim3(dp.TIM3, &clocks, &mut rcc.apb1).start_count_down(50.hz());
+        let mut timer3 = Timer::tim3(dp.TIM3, &clocks, &mut rcc.apb1).start_count_down(2.hz());
         timer3.listen(Event::Update);
 
         // PWM config
@@ -155,6 +167,8 @@ mod app {
         let _ = disp.clear(Rgb565::BLACK);
         let display = Display::new(disp);
 
+        let gui = Gui::new(display);
+
         // I2C config
         let scl = gpiob.pb8.into_alternate_open_drain(&mut gpiob.crh);
         let sda = gpiob.pb9.into_alternate_open_drain(&mut gpiob.crh);
@@ -185,88 +199,102 @@ mod app {
         enter.enable_interrupt(&dp.EXTI);
         let mut left = gpioa.pa11.into_pull_up_input(&mut gpioa.crh); // PA11
         left.make_interrupt_source(&mut afio);
-        left.trigger_on_edge(&dp.EXTI, Edge::RISING_FALLING);
+        left.trigger_on_edge(&dp.EXTI, Edge::FALLING);
         left.enable_interrupt(&dp.EXTI);
         let mut right = gpioa.pa12.into_pull_up_input(&mut gpioa.crh); //PA12
         right.make_interrupt_source(&mut afio);
-        right.trigger_on_edge(&dp.EXTI, Edge::RISING_FALLING);
+        right.trigger_on_edge(&dp.EXTI, Edge::FALLING);
         right.enable_interrupt(&dp.EXTI);
 
-        let menu = Menu::new();
-
         let buttons = Buttons { enter, left, right };
+
+        // Initialize RTC
+        let mut pwr = dp.PWR;
+        let mut backup_domain = rcc.bkp.constrain(dp.BKP, &mut rcc.apb1, &mut pwr);
+        let rtc = Rtc::rtc(dp.RTC, &mut backup_domain);
+        let watch = Watch::new(rtc);
+
         init::LateResources {
             led,
             tim: timer3,
             tone,
             delay,
-            display,
             bme,
-            menu,
+            gui,
             buttons,
+            watch,
         }
     }
 
-    #[idle(resources = [tone, delay, display, bme, menu])]
+    #[idle(resources = [tone, delay, bme, gui, watch, pressed_btn])]
     fn idle(cx: idle::Context) -> ! {
         let tone = cx.resources.tone;
         let delay = cx.resources.delay;
-        let display = cx.resources.display;
         let bme = cx.resources.bme;
-        let mut menu = cx.resources.menu;
-        (tone, delay, display, bme).lock(|tone, delay, display, bme| {
+        let mut gui = cx.resources.gui;
+        let watch = cx.resources.watch;
+        let mut pressed_btn = cx.resources.pressed_btn;
+        (tone, delay, bme, watch).lock(|tone, delay, bme, watch| {
             // draw stuff here
             tone.play_song(&crate::CAT_SONG, delay);
             loop {
-                let mut text: String<U64> = String::new();
-
-                let menu_item = menu.lock(|m| m.current_menu_item());
-                display.render_tab_header(menu_item);
-                text.clear();
-
-                match bme.measure(delay) {
-                    Ok(measurement) => {
-                        let confirm = menu.lock(|m| m.confirm);
-                        match menu_item {
-                            MenuItem::Temperature if confirm => {
-                                write!(text, "T: {:.2}C", measurement.temperature,).unwrap();
-                                display.print_text(&text, 10, 22);
-                            }
-                            MenuItem::Humidity if confirm => {
-                                write!(text, "H: {:.1}%", measurement.humidity,).unwrap();
-                                display.print_text(&text, 10, 22);
-                            }
-                            MenuItem::Pressure if confirm => {
-                                write!(text, "P: {:.0}Pa", measurement.pressure,).unwrap();
-                                display.print_text(&text, 10, 22);
-                            }
-                            _ => {}
-                        }
-                        menu.lock(|m| m.confirm = false);
+                // Update buttons
+                let pb = pressed_btn.lock(|pb| *pb);
+                match pb {
+                    PressedButton::Left => {
+                        gui.lock(|g| g.backward());
+                        pressed_btn.lock(|pb| *pb = PressedButton::None);
                     }
-                    Err(e) => {
-                        write!(text, "E: {:?}", e).unwrap();
-                        display.print_text(&text, 10, 100);
+                    PressedButton::Right => {
+                        gui.lock(|g| g.forward());
+                        pressed_btn.lock(|pb| *pb = PressedButton::None);
                     }
+                    _ => {}
                 };
+
+                // Update screen
+
+                gui.lock(|g| {
+                    g.print_header();
+
+                    match bme.measure(delay) {
+                        Ok(measurement) => {
+                            g.print_measurements((
+                                measurement.temperature as u8,
+                                measurement.humidity as u8,
+                                measurement.pressure as u32,
+                            ));
+                        }
+                        Err(e) => g.print_error(&e),
+                    };
+
+                    g.print_clock(&watch);
+                });
             }
         });
         loop {}
     }
 
-    #[task(binds = EXTI15_10, resources = [buttons, menu])]
+    #[task(binds = EXTI15_10, resources = [buttons, press_counter, pressed_btn])]
     fn exti15_10(cx: exti15_10::Context) {
         let buttons = cx.resources.buttons;
-        let menu = cx.resources.menu;
+        let press_counter = cx.resources.press_counter;
+        let pressed_btn = cx.resources.pressed_btn;
 
-        (buttons, menu).lock(|buttons, menu| {
+        (buttons, press_counter, pressed_btn).lock(|buttons, pc, pb| {
             let Buttons { enter, left, right } = buttons;
-            if enter.check_interrupt() && enter.is_low().unwrap() {
-                menu.confirm = true;
+            if enter.check_interrupt() {
+                if enter.is_low().unwrap() {
+                    *pc = 0;
+                } else if enter.is_high().unwrap() && *pc > 3 {
+                    *pb = PressedButton::LongPress;
+                } else if enter.is_high().unwrap() && *pc <= 3 {
+                    *pb = PressedButton::ShortPress;
+                }
             } else if left.check_interrupt() && left.is_low().unwrap() {
-                menu.backward();
+                *pb = PressedButton::Left;
             } else if right.check_interrupt() && right.is_low().unwrap() {
-                menu.forward();
+                *pb = PressedButton::Right;
             }
 
             enter.clear_interrupt_pending_bit();
@@ -275,9 +303,10 @@ mod app {
         })
     }
 
-    #[task(binds = TIM3, resources = [led, tim])]
+    #[task(binds = TIM3, resources = [led, tim, press_counter])]
     fn tim3(mut cx: tim3::Context) {
         let _ = cx.resources.led.lock(|led| led.toggle());
         let _ = cx.resources.tim.lock(|tim| tim.wait());
+        cx.resources.press_counter.lock(|pc| *pc += 1);
     }
 }
