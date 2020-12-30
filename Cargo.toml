@@ -20,7 +20,7 @@ cortex-m-rtic = "0.6.0-alpha.0"
 rtic-core = "0.3.1"
 st7735-lcd = "0.8.0-alpha.1"
 embedded-graphics = "0.7.0-alpha.2"
-heapless = {vrsion = "0.5.6", features = ["ufmt-impl"]}
+heapless = {version = "0.5.6", features = ["ufmt-impl"]}
 bme280 = {git = "https://github.com/VersBinarii/bme280-rs", features=["ufmt-impl"]}
 ufmt = "0.1.0"
 
