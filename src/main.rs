@@ -38,7 +38,7 @@ const CAT_SONG: [(char, u32); 24] = [
 #[rtic::app(device = crate::stm32)]
 mod app {
 
-    use crate::display::{Display, Gui, Watch};
+    use crate::display::{Clock, Display, Gui};
     use crate::tone::Tone;
     use bme280::BME280;
     use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
@@ -90,7 +90,7 @@ mod app {
         bme: BME280<BlockingI2c<I2C1, (SCL, SDA)>>,
         buttons: Buttons,
         gui: Gui,
-        watch: Watch,
+        clock: Clock,
         #[init(PressedButton::None)]
         pressed_btn: PressedButton,
         #[init(0)]
@@ -213,7 +213,7 @@ mod app {
         let mut pwr = dp.PWR;
         let mut backup_domain = rcc.bkp.constrain(dp.BKP, &mut rcc.apb1, &mut pwr);
         let rtc = Rtc::rtc(dp.RTC, &mut backup_domain);
-        let watch = Watch::new(rtc);
+        let clock = Clock::new(rtc);
 
         init::LateResources {
             led,
@@ -223,19 +223,19 @@ mod app {
             bme,
             gui,
             buttons,
-            watch,
+            clock,
         }
     }
 
-    #[idle(resources = [tone, delay, bme, gui, watch, pressed_btn])]
+    #[idle(resources = [tone, delay, bme, gui, clock, pressed_btn])]
     fn idle(cx: idle::Context) -> ! {
         let tone = cx.resources.tone;
         let delay = cx.resources.delay;
         let bme = cx.resources.bme;
         let mut gui = cx.resources.gui;
-        let watch = cx.resources.watch;
+        let clock = cx.resources.clock;
         let mut pressed_btn = cx.resources.pressed_btn;
-        (tone, delay, bme, watch).lock(|tone, delay, bme, watch| {
+        (tone, delay, bme, clock).lock(|tone, delay, bme, clock| {
             // draw stuff here
             tone.play_song(&crate::CAT_SONG, delay);
             loop {
@@ -269,7 +269,7 @@ mod app {
                         Err(e) => g.print_error(&e),
                     };
 
-                    g.print_clock(&watch);
+                    g.print_clock(&clock);
                 });
             }
         });

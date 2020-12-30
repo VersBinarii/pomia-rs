@@ -52,11 +52,11 @@ impl core::convert::From<u32> for Time {
     }
 }
 
-pub struct Watch {
+pub struct Clock {
     rtc: Rtc,
 }
 
-impl Watch {
+impl Clock {
     pub fn new(rtc: Rtc) -> Self {
         Self { rtc }
     }
@@ -70,7 +70,7 @@ impl Watch {
 #[derive(Copy, Clone)]
 pub enum View {
     Measure,
-    Watch,
+    Clock,
 }
 
 pub struct Gui {
@@ -84,7 +84,7 @@ impl Gui {
         use View::*;
         Self {
             display,
-            menu: [Measure, Watch],
+            menu: [Measure, Clock],
             pointer: 0,
             rerender: false,
         }
@@ -119,7 +119,7 @@ impl Gui {
         }
         let text = match self.current_menu_item() {
             View::Measure => "Measurements",
-            View::Watch => "Clock",
+            View::Clock => "Clock",
         };
         self.display.render_tab_header(&text);
     }
@@ -150,14 +150,14 @@ impl Gui {
         }
     }
 
-    pub fn print_clock(&mut self, watch: &Watch) {
-        if let View::Watch = self.current_menu_item() {
+    pub fn print_clock(&mut self, clock: &Clock) {
+        if let View::Clock = self.current_menu_item() {
             if self.rerender {
                 self.display.clear();
                 self.rerender = false;
             }
             let mut text: String<U16> = String::new();
-            let _ = uwrite!(text, "{}", watch.get_time());
+            let _ = uwrite!(text, "{}", clock.get_time());
             self.display.print_text(&text, 10, 30);
         }
     }
