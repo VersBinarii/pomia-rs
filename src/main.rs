@@ -61,11 +61,12 @@ mod app {
         spi::{Mode as SpiMode, Phase, Polarity, Spi},
         timer::{CountDownTimer, Event, Tim2NoRemap, Timer},
     };
+    use ufmt::derive::uDebug;
 
     type SCL = PB8<Alternate<OpenDrain>>;
     type SDA = PB9<Alternate<OpenDrain>>;
 
-    #[derive(Debug, Copy, Clone)]
+    #[derive(uDebug, Copy, Clone)]
     pub enum PressedButton {
         Left,
         Right,

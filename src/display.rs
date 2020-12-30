@@ -1,4 +1,3 @@
-use core::fmt::Write;
 use embedded_graphics::{
     fonts::{Font8x16, Text},
     pixelcolor::Rgb565,
@@ -18,6 +17,7 @@ use stm32f1xx_hal::{
     rtc::Rtc,
     spi::{Spi, Spi1NoRemap},
 };
+use ufmt::{uDebug, uDisplay, uWrite, uwrite, Formatter};
 
 type RESET = PB0<Output<PushPull>>;
 type DC = PB1<Output<PushPull>>;
@@ -32,13 +32,9 @@ pub struct Time {
     seconds: u8,
 }
 
-impl core::fmt::Display for Time {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{:02}:{:02}:{:02}",
-            self.hours, self.minutes, self.seconds
-        )
+impl uDisplay for Time {
+    fn fmt<W: uWrite + ?Sized>(&self, f: &mut Formatter<'_, W>) -> Result<(), W::Error> {
+        uwrite!(f, "{}:{}:{}", self.hours, self.minutes, self.seconds)
     }
 }
 
@@ -143,10 +139,12 @@ impl Gui {
             }
             let mut text: String<U32> = String::new();
 
-            let _ = write!(
+            let _ = uwrite!(
                 text,
-                "T: {:.1} C\nH: {:.2} %\nP: {:.0} Pa",
-                stats.0, stats.1, stats.2
+                "T: {} C\nH: {} %\nP: {} Pa",
+                stats.0,
+                stats.1,
+                stats.2
             );
             self.display.print_text(&text, 0, 30);
         }
@@ -159,14 +157,14 @@ impl Gui {
                 self.rerender = false;
             }
             let mut text: String<U16> = String::new();
-            let _ = write!(text, "{}", watch.get_time());
+            let _ = uwrite!(text, "{}", watch.get_time());
             self.display.print_text(&text, 10, 30);
         }
     }
 
-    pub fn print_error(&mut self, error: impl core::fmt::Debug) {
+    pub fn print_error(&mut self, error: impl uDebug) {
         let mut text: String<U16> = String::new();
-        let _ = write!(text, "{:?}", error);
+        let _ = uwrite!(text, "{:?}", error);
         self.display.print_text(&text, 10, 30);
     }
 }
@@ -204,6 +202,6 @@ impl Display {
     }
 
     pub fn clear(&mut self) {
-        self.display.clear(Rgb565::BLACK);
+        self.display.clear(Rgb565::BLACK).unwrap();
     }
 }
