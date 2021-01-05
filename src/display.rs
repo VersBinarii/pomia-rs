@@ -14,10 +14,9 @@ use stm32f1xx_hal::{
         Alternate, Floating, Input, Output, PushPull,
     },
     pac::SPI1,
-    rtc::Rtc,
     spi::{Spi, Spi1NoRemap},
 };
-use ufmt::{uDebug, uDisplay, uWrite, uwrite, Formatter};
+use ufmt::{uDebug, uwrite};
 
 type RESET = PB0<Output<PushPull>>;
 type DC = PB1<Output<PushPull>>;
@@ -26,51 +25,34 @@ type MISO = PA6<Input<Floating>>;
 type MOSI = PA7<Alternate<PushPull>>;
 type DISP = ST7735<Spi<SPI1, Spi1NoRemap, (SCK, MISO, MOSI), u8>, DC, RESET>;
 
-pub struct Time {
-    hours: u8,
-    minutes: u8,
-    seconds: u8,
+const EDIT: u8 = 8;
+const EDIT_H: u8 = 4;
+const EDIT_M: u8 = 2;
+const EDIT_S: u8 = 1;
+
+#[derive(Copy, Clone, Default)]
+pub struct ClockState {
+    edit: u8,
+    time: Time,
 }
 
-impl uDisplay for Time {
-    fn fmt<W: uWrite + ?Sized>(&self, f: &mut Formatter<'_, W>) -> Result<(), W::Error> {
-        uwrite!(f, "{}:{}:{}", self.hours, self.minutes, self.seconds)
-    }
-}
-
-impl core::convert::From<u32> for Time {
-    fn from(val: u32) -> Self {
-        let hours = (val / 3600) as u8;
-        let minutes = ((val % 3600) / 60) as u8;
-        let seconds = ((val % 3600) % 60) as u8;
-
+impl ClockState {
+    pub fn new(clock: &Clock) -> Self {
         Self {
-            hours,
-            minutes,
-            seconds,
+            edit: 0,
+            time: clock.get_time(),
         }
     }
-}
 
-pub struct Clock {
-    rtc: Rtc,
-}
-
-impl Clock {
-    pub fn new(rtc: Rtc) -> Self {
-        Self { rtc }
-    }
-
-    pub fn get_time(&self) -> Time {
-        let time_val = self.rtc.current_time();
-        time_val.into()
+    pub fn editing(&self) -> bool {
+        self.edit & EDIT != 0
     }
 }
 
 #[derive(Copy, Clone)]
 pub enum View {
     Measure,
-    Clock,
+    Clock(ClockState),
 }
 
 pub struct Gui {

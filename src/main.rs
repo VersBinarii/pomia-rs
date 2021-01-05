@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod clock;
 mod display;
 mod tone;
 
@@ -38,7 +39,8 @@ const CAT_SONG: [(char, u32); 24] = [
 #[rtic::app(device = crate::stm32)]
 mod app {
 
-    use crate::display::{Clock, Display, Gui};
+    use crate::clock::Clock;
+    use crate::display::{Display, Gui};
     use crate::tone::Tone;
     use bme280::BME280;
     use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
