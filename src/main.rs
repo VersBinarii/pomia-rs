@@ -264,7 +264,6 @@ mod app {
                 };
 
                 // Update screen
-
                 gui.lock(|g| {
                     g.print_header();
 
@@ -281,6 +280,7 @@ mod app {
 
                     g.print_clock(&clock);
                 });
+                delay.delay_ms(200u32);
             }
         });
         loop {}
