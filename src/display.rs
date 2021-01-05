@@ -31,18 +31,15 @@ const EDIT_H: u8 = 4;
 const EDIT_M: u8 = 2;
 const EDIT_S: u8 = 1;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct ClockState {
     edit: u8,
     time: Time,
 }
 
 impl ClockState {
-    pub fn new(clock: &Clock) -> Self {
-        Self {
-            edit: 0,
-            time: clock.get_time(),
-        }
+    pub fn with_time(time: Time) -> Self {
+        Self { edit: 0, time }
     }
 
     pub fn editing(&self) -> bool {
@@ -66,7 +63,7 @@ impl Gui {
     pub fn new(display: Display) -> Self {
         Self {
             display,
-            menu: [View::Measure, View::Clock(ClockState::default())],
+            menu: [View::Measure, View::Clock(ClockState::with_time(0.into()))],
             pointer: 0,
             rerender: false,
         }
@@ -152,7 +149,7 @@ impl Gui {
                 core::mem::swap(&mut self.menu[1], &mut View::Clock(state));
             }
             View::Clock(state) if !state.editing() => {
-                let mut cs = ClockState::new(clock);
+                let mut cs = ClockState::with_time(clock.get_time());
                 cs.edit |= EDIT | EDIT_H;
                 core::mem::swap(&mut self.menu[1], &mut View::Clock(cs));
             }

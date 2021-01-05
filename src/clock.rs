@@ -2,7 +2,7 @@ use heapless::{consts::*, String};
 use stm32f1xx_hal::rtc::Rtc;
 use ufmt::{uDisplay, uWrite, uwrite, Formatter};
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Time {
     pub hours: u8,
     pub minutes: u8,
