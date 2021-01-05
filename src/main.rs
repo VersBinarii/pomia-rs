@@ -237,7 +237,7 @@ mod app {
         let mut gui = cx.resources.gui;
         let clock = cx.resources.clock;
         let mut pressed_btn = cx.resources.pressed_btn;
-        (tone, delay, bme, clock).lock(|tone, delay, bme, clock| {
+        (tone, delay, bme, clock).lock(|tone, delay, bme, mut clock| {
             // draw stuff here
             tone.play_song(&crate::CAT_SONG, delay);
             loop {
@@ -250,6 +250,14 @@ mod app {
                     }
                     PressedButton::Right => {
                         gui.lock(|g| g.forward());
+                        pressed_btn.lock(|pb| *pb = PressedButton::None);
+                    }
+                    PressedButton::LongPress => {
+                        gui.lock(|g| g.edit_clock(&mut clock));
+                        pressed_btn.lock(|pb| *pb = PressedButton::None);
+                    }
+                    PressedButton::ShortPress => {
+                        gui.lock(|g| g.select());
                         pressed_btn.lock(|pb| *pb = PressedButton::None);
                     }
                     _ => {}

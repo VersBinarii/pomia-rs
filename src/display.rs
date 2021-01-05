@@ -1,8 +1,9 @@
+use crate::clock::{Clock, Time};
 use embedded_graphics::{
     fonts::{Font8x16, Text},
     pixelcolor::Rgb565,
     prelude::*,
-    primitives::Rectangle,
+    primitives::{Line, Rectangle},
     style::{MonoTextStyle, MonoTextStyleBuilder, PrimitiveStyle},
 };
 use heapless::{consts::*, String};
@@ -63,35 +64,119 @@ pub struct Gui {
 }
 impl Gui {
     pub fn new(display: Display) -> Self {
-        use View::*;
         Self {
             display,
-            menu: [Measure, Clock],
+            menu: [View::Measure, View::Clock(ClockState::default())],
             pointer: 0,
             rerender: false,
         }
     }
 
     pub fn forward(&mut self) {
-        self.pointer += 1;
-        if self.pointer > 1 {
-            self.pointer = 0;
+        match self.current_menu_item() {
+            View::Clock(mut state) if state.editing() => {
+                if state.edit & EDIT_H != 0 {
+                    state.time.hours += 1;
+                    if state.time.hours > 24 {
+                        state.time.hours = 0;
+                    }
+                }
+                if state.edit & EDIT_M != 0 {
+                    state.time.minutes += 1;
+                    if state.time.minutes > 59 {
+                        state.time.minutes = 0;
+                    }
+                }
+                if state.edit & EDIT_S != 0 {
+                    state.time.seconds += 1;
+                    if state.time.seconds > 59 {
+                        state.time.seconds = 0;
+                    }
+                }
+                core::mem::swap(&mut self.menu[1], &mut View::Clock(state));
+            }
+            _ => {
+                self.pointer += 1;
+                if self.pointer > 1 {
+                    self.pointer = 0;
+                }
+            }
         }
 
         self.rerender = true;
     }
 
     pub fn backward(&mut self) {
-        self.pointer -= 1;
-        if self.pointer < 0 {
-            self.pointer = 1;
+        match self.current_menu_item() {
+            View::Clock(mut state) if state.editing() => {
+                if state.edit & EDIT_H != 0 {
+                    state.time.hours -= 1;
+                    if let None = state.time.hours.checked_sub(1) {
+                        state.time.hours = 23;
+                    }
+                }
+                if state.edit & EDIT_M != 0 {
+                    state.time.minutes -= 1;
+                    if let None = state.time.minutes.checked_sub(1) {
+                        state.time.minutes = 59;
+                    }
+                }
+                if state.edit & EDIT_S != 0 {
+                    state.time.seconds -= 1;
+                    if let None = state.time.seconds.checked_sub(1) {
+                        state.time.seconds = 59;
+                    }
+                }
+                core::mem::swap(&mut self.menu[1], &mut View::Clock(state));
+            }
+            _ => {
+                self.pointer -= 1;
+                if self.pointer < 0 {
+                    self.pointer = 1;
+                }
+            }
         }
 
         self.rerender = true;
     }
 
-    pub fn current_menu_item(&self) -> View {
+    fn current_menu_item(&self) -> View {
         self.menu[self.pointer as usize]
+    }
+
+    pub fn edit_clock(&mut self, clock: &mut Clock) {
+        match self.current_menu_item() {
+            View::Clock(mut state) if state.editing() => {
+                clock.set_time(&state.time);
+                state.edit = 0;
+                core::mem::swap(&mut self.menu[1], &mut View::Clock(state));
+            }
+            View::Clock(state) if !state.editing() => {
+                let mut cs = ClockState::new(clock);
+                cs.edit |= EDIT | EDIT_H;
+                core::mem::swap(&mut self.menu[1], &mut View::Clock(cs));
+            }
+            _ => {}
+        }
+
+        self.rerender = true;
+    }
+
+    pub fn select(&mut self) {
+        match self.current_menu_item() {
+            View::Clock(mut state) if state.editing() => {
+                let mut tmp = state.edit & 0x7;
+                tmp >>= 1;
+                if tmp == 0 {
+                    tmp = 4;
+                }
+                state.edit &= !0x7;
+                state.edit |= tmp;
+                core::mem::swap(&mut self.menu[1], &mut View::Clock(state));
+                self.rerender = true;
+            }
+            _ => {}
+        }
     }
 
     pub fn print_header(&mut self) {
@@ -101,7 +186,8 @@ impl Gui {
         }
         let text = match self.current_menu_item() {
             View::Measure => "Measurements",
-            View::Clock => "Clock",
+            View::Clock(clock_state) if clock_state.editing() => "Clock (Edit)",
+            View::Clock(_) => "Clock",
         };
         self.display.render_tab_header(&text);
     }
@@ -133,14 +219,42 @@ impl Gui {
     }
 
     pub fn print_clock(&mut self, clock: &Clock) {
-        if let View::Clock = self.current_menu_item() {
+        if let View::Clock(state) = self.current_menu_item() {
             if self.rerender {
                 self.display.clear();
                 self.rerender = false;
             }
-            let mut text: String<U16> = String::new();
-            let _ = uwrite!(text, "{}", clock.get_time());
-            self.display.print_text(&text, 10, 30);
+
+            match state.editing() {
+                false => {
+                    let mut text: String<U16> = String::new();
+                    let _ = uwrite!(text, "{}", clock.get_time());
+                    self.display.print_text(&text, 10, 30);
+                }
+                true => {
+                    //display the edit pointer
+                    let mut text: String<U16> = String::new();
+                    let _ = uwrite!(text, "{}", state.time);
+                    self.display.print_text(&text, 10, 30);
+
+                    if state.edit & EDIT_H != 0 {
+                        //underline hours
+                        self.display
+                            .print_pointer(Point::new(10, 45), Point::new(30, 45));
+                    }
+
+                    if state.edit & EDIT_M != 0 {
+                        //underline minutes
+                        self.display
+                            .print_pointer(Point::new(35, 45), Point::new(55, 45));
+                    }
+                    if state.edit & EDIT_S != 0 {
+                        //underline seconds
+                        self.display
+                            .print_pointer(Point::new(60, 45), Point::new(80, 45));
+                    }
+                }
+            }
         }
     }
 
@@ -181,6 +295,13 @@ impl Display {
             .draw(&mut self.display)
             .unwrap();
         self.print_text(text, (128 - (text.len() * 8) as i32) / 2, 3);
+    }
+
+    pub fn print_pointer(&mut self, start: Point, end: Point) {
+        Line::new(start, end)
+            .into_styled(PrimitiveStyle::with_stroke(Rgb565::RED, 1))
+            .draw(&mut self.display)
+            .unwrap();
     }
 
     pub fn clear(&mut self) {
