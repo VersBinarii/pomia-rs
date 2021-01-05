@@ -50,11 +50,12 @@ impl core::convert::From<&Time> for u32 {
         val.hours as u32 * 3600 + val.minutes as u32 * 60 + val.seconds as u32
     }
 }
-pub struct Clock {
+
+pub struct RtcClock {
     rtc: Rtc,
 }
 
-impl Clock {
+impl RtcClock {
     pub fn new(rtc: Rtc) -> Self {
         Self { rtc }
     }

@@ -1,10 +1,10 @@
-use crate::clock::{Clock, Time};
+use crate::clock::{RtcClock, Time};
 use embedded_graphics::{
-    fonts::{Font8x16, Text},
+    fonts::{Font12x16, Font8x16, Text},
     pixelcolor::Rgb565,
     prelude::*,
     primitives::{Line, Rectangle},
-    style::{MonoTextStyle, MonoTextStyleBuilder, PrimitiveStyle},
+    style::{MonoTextStyleBuilder, PrimitiveStyle},
 };
 use heapless::{consts::*, String};
 use st7735_lcd::ST7735;
@@ -141,7 +141,7 @@ impl Gui {
         self.menu[self.pointer as usize]
     }
 
-    pub fn edit_clock(&mut self, clock: &mut Clock) {
+    pub fn edit_clock(&mut self, clock: &mut RtcClock) {
         match self.current_menu_item() {
             View::Clock(mut state) if state.editing() => {
                 clock.set_time(&state.time);
@@ -206,16 +206,16 @@ impl Gui {
 
             let _ = uwrite!(
                 text,
-                "T: {} C\nH: {} %\nP: {} Pa",
+                "T: {} C\n\nH: {} %\n\nP: {} Pa",
                 stats.0,
                 stats.1,
                 stats.2
             );
-            self.display.print_text(&text, 0, 30);
+            self.display.print_text_lg(&text, 0, 30);
         }
     }
 
-    pub fn print_clock(&mut self, clock: &Clock) {
+    pub fn print_clock(&mut self, clock: &RtcClock) {
         if let View::Clock(state) = self.current_menu_item() {
             if self.rerender {
                 self.display.clear();
@@ -237,14 +237,13 @@ impl Gui {
                         //underline hours
                         x_position = 10;
                     }
-
                     if state.edit & EDIT_M != 0 {
                         //underline minutes
-                        x_position = 35;
+                        x_position = 45;
                     }
                     if state.edit & EDIT_S != 0 {
                         //underline seconds
-                        x_position = 60;
+                        x_position = 80;
                     }
                 }
             }
@@ -254,35 +253,44 @@ impl Gui {
                     Point::new(x_position + 20, y_position),
                 );
             }
-            self.display.print_text(&text, 10, 30);
+            self.display.print_text_lg(&text, 10, 30);
         }
     }
 
     pub fn print_error(&mut self, error: impl uDebug) {
         let mut text: String<U16> = String::new();
         let _ = uwrite!(text, "{:?}", error);
-        self.display.print_text(&text, 10, 30);
+        self.display.print_text_sm(&text, 10, 30);
     }
 }
 
 pub struct Display {
-    style: MonoTextStyle<Rgb565, Font8x16>,
     display: DISP,
 }
 
 impl Display {
     pub fn new(display: DISP) -> Self {
+        Self { display }
+    }
+
+    pub fn print_text_sm(&mut self, text: &str, x: i32, y: i32) {
         let style = MonoTextStyleBuilder::new(Font8x16)
             .text_color(Rgb565::RED)
             .background_color(Rgb565::BLACK)
             .build();
-
-        Self { display, style }
+        Text::new(text, Point::new(x, y))
+            .into_styled(style)
+            .draw(&mut self.display)
+            .unwrap();
     }
 
-    pub fn print_text(&mut self, text: &str, x: i32, y: i32) {
+    pub fn print_text_lg(&mut self, text: &str, x: i32, y: i32) {
+        let style = MonoTextStyleBuilder::new(Font12x16)
+            .text_color(Rgb565::RED)
+            .background_color(Rgb565::BLACK)
+            .build();
         Text::new(text, Point::new(x, y))
-            .into_styled(self.style)
+            .into_styled(style)
             .draw(&mut self.display)
             .unwrap();
     }
@@ -294,7 +302,7 @@ impl Display {
             .into_styled(thick_stroke)
             .draw(&mut self.display)
             .unwrap();
-        self.print_text(text, (128 - (text.len() * 8) as i32) / 2, 3);
+        self.print_text_sm(text, (128 - (text.len() * 8) as i32) / 2, 3);
     }
 
     pub fn print_pointer(&mut self, start: Point, end: Point) {

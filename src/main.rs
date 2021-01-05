@@ -39,7 +39,7 @@ const CAT_SONG: [(char, u32); 24] = [
 #[rtic::app(device = crate::stm32)]
 mod app {
 
-    use crate::clock::Clock;
+    use crate::clock::RtcClock;
     use crate::display::{Display, Gui};
     use crate::tone::Tone;
     use bme280::BME280;
@@ -92,7 +92,7 @@ mod app {
         bme: BME280<BlockingI2c<I2C1, (SCL, SDA)>>,
         buttons: Buttons,
         gui: Gui,
-        clock: Clock,
+        clock: RtcClock,
         #[init(PressedButton::None)]
         pressed_btn: PressedButton,
         #[init(0)]
@@ -215,7 +215,7 @@ mod app {
         let mut pwr = dp.PWR;
         let mut backup_domain = rcc.bkp.constrain(dp.BKP, &mut rcc.apb1, &mut pwr);
         let rtc = Rtc::rtc(dp.RTC, &mut backup_domain);
-        let clock = Clock::new(rtc);
+        let clock = RtcClock::new(rtc);
 
         init::LateResources {
             led,
