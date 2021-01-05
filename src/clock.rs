@@ -21,11 +21,11 @@ impl uDisplay for Time {
 
 fn zero_pad(num: u8) -> String<U2> {
     let mut num_str = String::new();
-    uwrite!(num_str, "{}", num).unwrap();
-
-    if num_str.len() == 1 {
+    if num < 10 {
         num_str.clear();
         uwrite!(num_str, "0{}", num).unwrap();
+    } else {
+        uwrite!(num_str, "{}", num).unwrap();
     }
 
     num_str
