@@ -225,36 +225,39 @@ impl Gui {
                 self.rerender = false;
             }
 
+            let y_position = 46;
+            let mut x_position = 0;
+            let mut text: String<U16> = String::new();
             match state.editing() {
                 false => {
-                    let mut text: String<U16> = String::new();
                     let _ = uwrite!(text, "{}", clock.get_time());
-                    self.display.print_text(&text, 10, 30);
                 }
                 true => {
                     //display the edit pointer
-                    let mut text: String<U16> = String::new();
                     let _ = uwrite!(text, "{}", state.time);
-                    self.display.print_text(&text, 10, 30);
 
                     if state.edit & EDIT_H != 0 {
                         //underline hours
-                        self.display
-                            .print_pointer(Point::new(10, 45), Point::new(30, 45));
+                        x_position = 10;
                     }
 
                     if state.edit & EDIT_M != 0 {
                         //underline minutes
-                        self.display
-                            .print_pointer(Point::new(35, 45), Point::new(55, 45));
+                        x_position = 35;
                     }
                     if state.edit & EDIT_S != 0 {
                         //underline seconds
-                        self.display
-                            .print_pointer(Point::new(60, 45), Point::new(80, 45));
+                        x_position = 60;
                     }
                 }
             }
+            if x_position != 0 {
+                self.display.print_pointer(
+                    Point::new(x_position, y_position),
+                    Point::new(x_position + 20, y_position),
+                );
+            }
+            self.display.print_text(&text, 10, 30);
         }
     }
 
